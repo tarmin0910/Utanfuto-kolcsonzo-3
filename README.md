@@ -50,6 +50,7 @@ cmake --build .
 - Utánfutók nyomonkövetése
 - Dinamikus szűrés
 - Duplafaktoros bejelentkezés
+- Regsztrációnál jelszó erősség szabályozás
 
 ## 3. Csapat
 
