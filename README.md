@@ -46,6 +46,11 @@ cmake --build .
 - Admin funkciók
 - Statisztika grafikon
 
+### Saját funkciók
+- Utánfutók nyomonkövetése
+- Dinamikus szűrés
+- Duplafaktoros bejelentkezés
+
 ## 3. Csapat
 
 - Baksa Áron
