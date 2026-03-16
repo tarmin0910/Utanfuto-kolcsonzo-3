@@ -28,19 +28,19 @@ cmake --build .
 
 ## Projekt Állapot
 
-### ✅ Elkészült (1-2. alkalom)
+### Elkészült (1-2. alkalom)
 - [x] Technológia választás
 - [x] Frontend PoC (bejelentkezés, főoldal, profil)
 - [x] Projekt struktúra
 - [x] Adatbázis PoC (Qt SQL + SQLite)
 - [x] Model osztályok (User, Trailer, Booking)
 
-### 🚧 Folyamatban (3. alkalom)
+### Folyamatban (3. alkalom)
 - [ ] Utánfutók megtekintése (vendég)
 - [ ] Foglaltság megtekintése
 - [ ] Foglalás létrehozása
 
-### 📋 Tervezett (4-5. alkalom)
+### Tervezett (4-5. alkalom)
 - Foglalások kezelése
 - Felhasználói adatok módosítása
 - Admin funkciók
