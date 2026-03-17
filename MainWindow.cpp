@@ -1,22 +1,30 @@
 #include "MainWindow.h"
 #include "TrailerCard.h"
+#include "RentDialog.h"
+#include "ReservationDetailsDialog.h"
 
-#include <QToolBar>
 #include <QAction>
-#include <QStackedWidget>
-#include <QScrollArea>
-#include <QVBoxLayout>
-#include <QHBoxLayout>
-#include <QGridLayout>
-#include <QPushButton>
-#include <QLineEdit>
-#include <QLabel>
-#include <QMessageBox>
-#include <QFrame>
-#include <QStyle>
 #include <QApplication>
-#include <QListWidget>
 #include <QDateTime>
+#include <QFrame>
+#include <QGridLayout>
+#include <QHeaderView>
+#include <QHBoxLayout>
+#include <QLabel>
+#include <QLineEdit>
+#include <QListWidget>
+#include <QListWidgetItem>
+#include <QLocale>
+#include <QColor>
+#include <QMessageBox>
+#include <QPushButton>
+#include <QScrollArea>
+#include <QStackedWidget>
+#include <QStyle>
+#include <QTableWidget>
+#include <QTableWidgetItem>
+#include <QToolBar>
+#include <QVBoxLayout>
 
 static void styleTab(QPushButton* b, bool active){
     b->setCheckable(true);
@@ -40,15 +48,19 @@ static QFrame* roundedPanel(const QString& name){
 }
 
 MainWindow::MainWindow(QWidget* parent)
-    : QMainWindow(parent)
+    : QMainWindow(parent), m_calendarMonth(QDate::currentDate())
 {
     setWindowTitle(QStringLiteral("Trailo"));
     applyGlobalStyle();
 
     m_rootPages = new QStackedWidget(this);
-    m_rootPages->addWidget(buildLoginPage()); // 0
-    m_rootPages->addWidget(buildAppShell());  // 1
+    m_rootPages->addWidget(buildLoginPage());
+    m_rootPages->addWidget(buildAppShell());
     setCentralWidget(m_rootPages);
+
+    fillProfileFields(DatabaseManager::instance().loadCustomerProfile());
+    refreshOrders();
+    refreshCalendar();
 
     showLogin();
 }
@@ -65,9 +77,11 @@ void MainWindow::applyGlobalStyle()
                         "\nQPushButton#link:hover{color:#1d4ed8;}"
                         "\nQLabel#title{font-size:34px;font-weight:900;color:#0a2233;}"
                         "\nQLabel#error{color:#dc2626;font-weight:800;}"
-                        "\nQListWidget{border:1px solid #eef2f7;border-radius:12px;padding:6px;}"
+                        "\nQListWidget{border:1px solid #eef2f7;border-radius:12px;padding:6px;background:#fff;}"
                         "\nQListWidget::item{padding:10px;border-radius:10px;}"
                         "\nQListWidget::item:selected{background:#0a2233;color:white;}"
+                        "\nQTableWidget{background:#fff;border:1px solid #eef2f7;border-radius:12px;gridline-color:#eef2f7;}"
+                        "\nQHeaderView::section{background:#f8fafc;border:none;padding:8px;font-weight:800;color:#0a2233;}"
                         );
 }
 
@@ -151,9 +165,9 @@ QWidget* MainWindow::buildAppShell()
 
     auto *logo = new QLabel(QStringLiteral("<b style='font-size:18px'>Trailo</b>"));
 
-    m_tabTrailer  = new QPushButton(QStringLiteral("Trailer"));
-    m_tabCalendar = new QPushButton(QStringLiteral("Calendar"));
-    m_tabOrders   = new QPushButton(QStringLiteral("Orders"));
+    m_tabTrailer  = new QPushButton(QStringLiteral("Utánfutók"));
+    m_tabCalendar = new QPushButton(QStringLiteral("Naptár"));
+    m_tabOrders   = new QPushButton(QStringLiteral("Rendelések"));
 
     styleTab(m_tabTrailer, true);
     styleTab(m_tabCalendar, false);
@@ -176,8 +190,8 @@ QWidget* MainWindow::buildAppShell()
     m_settingsAction = tb->addAction(style()->standardIcon(QStyle::SP_FileDialogDetailedView), QStringLiteral("Beállítások"));
 
     connect(m_profileAction, &QAction::triggered, this, &MainWindow::showProfile);
-    connect(m_settingsAction, &QAction::triggered, this, [](){
-        QMessageBox::information(nullptr, "PoC", "Beállítások (PoC)");
+    connect(m_settingsAction, &QAction::triggered, this, [this](){
+        QMessageBox::information(this, QStringLiteral("Információ"), QStringLiteral("A foglalások mentése SQLite adatbázisba történik a program mappájában."));
     });
 
     auto* shell = new QWidget;
@@ -186,70 +200,131 @@ QWidget* MainWindow::buildAppShell()
     shellLay->setSpacing(0);
 
     m_pages = new QStackedWidget(shell);
-    m_pages->addWidget(buildTrailerPage());  // 0
-    m_pages->addWidget(buildCalendarPage()); // 1
-    m_pages->addWidget(buildOrdersPage());   // 2
-    m_pages->addWidget(buildProfilePage());  // 3
+    m_pages->addWidget(buildTrailerPage());
+    m_pages->addWidget(buildCalendarPage());
+    m_pages->addWidget(buildOrdersPage());
+    m_pages->addWidget(buildProfilePage());
     shellLay->addWidget(m_pages);
 
     return shell;
 }
 
 QWidget* MainWindow::buildTrailerPage() {
-    auto *outer = new QWidget; outer->setStyleSheet("QWidget{background:transparent;}");
-    auto *outerLay = new QVBoxLayout(outer); outerLay->setContentsMargins(16,12,16,16); outerLay->setSpacing(12);
+    auto *outer = new QWidget;
+    outer->setStyleSheet("QWidget{background:transparent;}");
+
+    auto *outerLay = new QVBoxLayout(outer);
+    outerLay->setContentsMargins(16,12,16,16);
+    outerLay->setSpacing(12);
 
     auto *panel = roundedPanel("panel");
-    auto *root = new QVBoxLayout(panel); root->setContentsMargins(16,16,16,16); root->setSpacing(16);
+    auto *root = new QVBoxLayout(panel);
+    root->setContentsMargins(16,16,16,16);
+    root->setSpacing(16);
 
-    auto *searchWrap = new QFrame; searchWrap->setObjectName("search");
-    searchWrap->setStyleSheet("QFrame#search{background:#f6f7f8;border:1px solid #e9ecef;border-radius:14px;}");
-    auto *sLay = new QHBoxLayout(searchWrap); sLay->setContentsMargins(12,6,12,6);
-    auto *ico = new QLabel(QStringLiteral("🔍"));
-    auto *search = new QLineEdit; search->setPlaceholderText(QStringLiteral("Kategóriák")); search->setFrame(false);
-    sLay->addWidget(ico); sLay->addSpacing(6); sLay->addWidget(search);
+    auto *title = new QLabel(QStringLiteral("<b style='font-size:18px'>Utánfutók</b>"));
+    auto* subtitle = new QLabel(QStringLiteral("Válassz típust, majd add meg a bérlési időszakot a felugró ablakban."));
+    subtitle->setStyleSheet("color:#475569;");
+    root->addWidget(title);
+    root->addWidget(subtitle);
 
-    root->addWidget(searchWrap);
+    auto *grid = new QGridLayout;
+    grid->setSpacing(16);
 
-    auto *cards = new QHBoxLayout; cards->setSpacing(20);
-    auto *openTrailer = new TrailerCard(QStringLiteral("Nyitott Rakomány Utánfutó"), QStringLiteral("9 000"));
-    auto *closedTrailer = new TrailerCard(QStringLiteral("Zárt Utánfutó"), QStringLiteral("11 500"));
-    cards->addWidget(openTrailer, 1);
-    cards->addWidget(closedTrailer, 1);
-    root->addLayout(cards);
+    auto *t1 = new TrailerCard("Nyitott, oldalfalas utánfutó", "5000", ":/images/open.jpg");
+    auto *t2 = new TrailerCard("Ponyvás", "7000", ":/images/ponyva.png");
+    auto *t3 = new TrailerCard("Motorszállító", "8000", ":/images/motor.jpg");
+    auto *t4 = new TrailerCard("Autószállító", "12000", ":/images/auto.png");
+    auto *t5 = new TrailerCard("Zárt dobozos / autó- és áruszállító", "18000", ":/images/box.jpg");
+    auto *t6 = new TrailerCard("Billenőplatós utánfutó", "7500", ":/images/billeno.png");
 
-    outerLay->addWidget(panel);
-    outerLay->addStretch();
+    grid->addWidget(t1,0,0);
+    grid->addWidget(t2,0,1);
+    grid->addWidget(t3,1,0);
+    grid->addWidget(t4,1,1);
+    grid->addWidget(t5,2,0);
+    grid->addWidget(t6,2,1);
 
-    connect(openTrailer, &TrailerCard::orderClicked, this, &MainWindow::orderTrailer);
-    connect(closedTrailer, &TrailerCard::orderClicked, this, &MainWindow::orderTrailer);
+    root->addLayout(grid);
+    root->addStretch();
+
+    for (auto* card : {t1,t2,t3,t4,t5,t6}) {
+        connect(card, &TrailerCard::orderClicked, this, &MainWindow::orderTrailer);
+    }
+
+    QScrollArea* scroll = new QScrollArea;
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+
+    scroll->setWidget(panel);
+
+    outerLay->addWidget(scroll);
+
     return outer;
 }
 
+
 QWidget* MainWindow::buildCalendarPage() {
-    auto *outer = new QWidget; outer->setStyleSheet("QWidget{background:transparent;}");
-    auto *outerLay = new QVBoxLayout(outer); outerLay->setContentsMargins(16,12,16,16); outerLay->setSpacing(12);
+    auto *outer = new QWidget;
+    auto *outerLay = new QVBoxLayout(outer);
+    outerLay->setContentsMargins(16,12,16,16);
+    outerLay->setSpacing(12);
 
     auto *panel = roundedPanel("panel");
-    auto *root = new QVBoxLayout(panel); root->setContentsMargins(16,16,16,16); root->setSpacing(16);
+    auto *root = new QVBoxLayout(panel);
+    root->setContentsMargins(16,16,16,16);
+    root->setSpacing(12);
 
-    root->addWidget(new QLabel(QStringLiteral("<b>Calendar</b> (PoC)\nItt lesz a foglaltsági naptár.")));
+    auto* header = new QHBoxLayout;
+    auto* prevBtn = new QPushButton(QStringLiteral("◀ Előző hónap"));
+    auto* nextBtn = new QPushButton(QStringLiteral("Következő hónap ▶"));
+    prevBtn->setStyleSheet("QPushButton{padding:8px 12px;border-radius:10px;background:#f1f5f9;font-weight:700;} QPushButton:hover{background:#e2e8f0;}");
+    nextBtn->setStyleSheet(prevBtn->styleSheet());
+    m_calendarMonthLabel = new QLabel;
+    m_calendarMonthLabel->setStyleSheet("font-size:18px;font-weight:900;color:#0a2233;");
+    header->addWidget(prevBtn);
+    header->addStretch();
+    header->addWidget(m_calendarMonthLabel);
+    header->addStretch();
+    header->addWidget(nextBtn);
+    root->addLayout(header);
+
+    m_calendarLegendLabel = new QLabel(QStringLiteral("Zöld: van foglalás • Piros: egy adott napon az összes 3 db elfogyott • A cella tooltipjében ott a név és az időszak."));
+    m_calendarLegendLabel->setStyleSheet("color:#475569;");
+    root->addWidget(m_calendarLegendLabel);
+
+    m_calendarTable = new QTableWidget;
+    m_calendarTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    m_calendarTable->setSelectionMode(QAbstractItemView::NoSelection);
+    m_calendarTable->verticalHeader()->setVisible(true);
+    m_calendarTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Fixed);
+    m_calendarTable->horizontalHeader()->setDefaultSectionSize(34);
+    m_calendarTable->verticalHeader()->setDefaultSectionSize(54);
+    root->addWidget(m_calendarTable, 1);
+
+    connect(prevBtn, &QPushButton::clicked, this, &MainWindow::showPreviousMonth);
+    connect(nextBtn, &QPushButton::clicked, this, &MainWindow::showNextMonth);
+
     outerLay->addWidget(panel);
-    outerLay->addStretch();
     return outer;
 }
 
 QWidget* MainWindow::buildOrdersPage() {
-    auto *outer = new QWidget; outer->setStyleSheet("QWidget{background:transparent;}");
-    auto *outerLay = new QVBoxLayout(outer); outerLay->setContentsMargins(16,12,16,16); outerLay->setSpacing(12);
+    auto *outer = new QWidget;
+    auto *outerLay = new QVBoxLayout(outer);
+    outerLay->setContentsMargins(16,12,16,16);
+    outerLay->setSpacing(12);
 
     auto *panel = roundedPanel("panel");
-    auto *root = new QVBoxLayout(panel); root->setContentsMargins(16,16,16,16); root->setSpacing(12);
+    auto *root = new QVBoxLayout(panel);
+    root->setContentsMargins(16,16,16,16);
+    root->setSpacing(12);
 
-    auto *title = new QLabel(QStringLiteral("<b style='font-size:18px'>Orders</b>"));
+    auto *title = new QLabel(QStringLiteral("<b style='font-size:18px'>Rendelések</b>"));
     root->addWidget(title);
 
-    auto *hint = new QLabel(QStringLiteral("Itt jelennek meg a leadott rendelések. (PoC)"));
+    auto *hint = new QLabel(QStringLiteral("Itt jelennek meg az elmentett foglalások. Dupla kattintással megnyithatod a részleteket és törölheted is őket."));
     hint->setStyleSheet("color:#475569;");
     root->addWidget(hint);
 
@@ -259,29 +334,29 @@ QWidget* MainWindow::buildOrdersPage() {
 
     auto *row = new QHBoxLayout;
     row->addStretch();
-
-    auto *clearBtn = new QPushButton(QStringLiteral("Lista ürítése"));
-    clearBtn->setStyleSheet("QPushButton{padding:8px 12px;border-radius:10px;background:#f1f3f5;font-weight:800;}"
-                            "QPushButton:hover{background:#e9ecef;}");
-    row->addWidget(clearBtn);
+    auto *refreshBtn = new QPushButton(QStringLiteral("Frissítés"));
+    refreshBtn->setStyleSheet("QPushButton{padding:8px 12px;border-radius:10px;background:#f1f3f5;font-weight:800;} QPushButton:hover{background:#e9ecef;}");
+    row->addWidget(refreshBtn);
     root->addLayout(row);
 
-    connect(clearBtn, &QPushButton::clicked, this, [this]{
-        if (m_ordersList) m_ordersList->clear();
-    });
+    connect(refreshBtn, &QPushButton::clicked, this, &MainWindow::refreshOrders);
+    connect(m_ordersList, &QListWidget::itemDoubleClicked, this, &MainWindow::onOrderItemDoubleClicked);
 
     outerLay->addWidget(panel);
-    outerLay->addStretch();
     return outer;
 }
 
 QWidget* MainWindow::buildProfilePage()
 {
-    auto *outer = new QWidget; outer->setStyleSheet("QWidget{background:transparent;}");
-    auto *outerLay = new QVBoxLayout(outer); outerLay->setContentsMargins(16,12,16,16); outerLay->setSpacing(12);
+    auto *outer = new QWidget;
+    auto *outerLay = new QVBoxLayout(outer);
+    outerLay->setContentsMargins(16,12,16,16);
+    outerLay->setSpacing(12);
 
     auto *panel = roundedPanel("panel");
-    auto *root = new QVBoxLayout(panel); root->setContentsMargins(16,16,16,16); root->setSpacing(14);
+    auto *root = new QVBoxLayout(panel);
+    root->setContentsMargins(16,16,16,16);
+    root->setSpacing(14);
 
     auto *title = new QLabel(QStringLiteral("<b style='font-size:18px'>Profil / Számlázási adatok</b>"));
     root->addWidget(title);
@@ -297,12 +372,9 @@ QWidget* MainWindow::buildProfilePage()
     m_profEmail = new QLineEdit; m_profEmail->setPlaceholderText("Email");
     m_profPhone = new QLineEdit; m_profPhone->setPlaceholderText("Telefonszám");
 
-    pLay->addWidget(new QLabel("Teljes név"), 0,0);
-    pLay->addWidget(m_profName, 0,1);
-    pLay->addWidget(new QLabel("Email"), 1,0);
-    pLay->addWidget(m_profEmail, 1,1);
-    pLay->addWidget(new QLabel("Telefon"), 2,0);
-    pLay->addWidget(m_profPhone, 2,1);
+    pLay->addWidget(new QLabel("Teljes név"), 0,0); pLay->addWidget(m_profName, 0,1);
+    pLay->addWidget(new QLabel("Email"), 1,0); pLay->addWidget(m_profEmail, 1,1);
+    pLay->addWidget(new QLabel("Telefon"), 2,0); pLay->addWidget(m_profPhone, 2,1);
     root->addWidget(personal);
 
     auto *billing = roundedPanel("billing");
@@ -325,7 +397,6 @@ QWidget* MainWindow::buildProfilePage()
     bLay->addWidget(new QLabel("Város"), 2,0); bLay->addWidget(m_profBillingCity, 2,1);
     bLay->addWidget(new QLabel("Utca"), 2,2); bLay->addWidget(m_profBillingStreet, 2,3);
     bLay->addWidget(new QLabel("Házszám"), 3,0); bLay->addWidget(m_profBillingHouse, 3,1);
-
     root->addWidget(billing);
 
     auto *extra = roundedPanel("extra");
@@ -344,7 +415,6 @@ QWidget* MainWindow::buildProfilePage()
     eLay->addWidget(new QLabel("Adószám"), 1,0); eLay->addWidget(m_profTaxNumber, 1,1);
     eLay->addWidget(new QLabel("Személyi"), 2,0); eLay->addWidget(m_profIdNumber, 2,1);
     eLay->addWidget(new QLabel("Jogosítvány"), 2,2); eLay->addWidget(m_profDriverLicense, 2,3);
-
     root->addWidget(extra);
 
     auto *btnRow = new QHBoxLayout;
@@ -363,18 +433,14 @@ QWidget* MainWindow::buildProfilePage()
 
 void MainWindow::showLogin()
 {
-    if (auto* tb = findChild<QToolBar*>()) {
-        tb->setVisible(false);
-    }
+    if (auto* tb = findChild<QToolBar*>()) tb->setVisible(false);
     m_rootPages->setCurrentIndex(0);
     setWindowTitle("Trailo – Bejelentkezés");
 }
 
 void MainWindow::showApp()
 {
-    if (auto* tb = findChild<QToolBar*>()) {
-        tb->setVisible(true);
-    }
+    if (auto* tb = findChild<QToolBar*>()) tb->setVisible(true);
     m_rootPages->setCurrentIndex(1);
     showTrailer();
 }
@@ -384,13 +450,9 @@ void MainWindow::showProfile()
     styleTab(m_tabTrailer, false);
     styleTab(m_tabCalendar, false);
     styleTab(m_tabOrders, false);
-
     m_pages->setCurrentIndex(3);
     setWindowTitle("Trailo – Profil");
-
-    if (m_profEmail) m_profEmail->setText(m_email);
-    if (m_profPhone) m_profPhone->setText(m_phone);
-    if (m_profName && m_profName->text().trimmed().isEmpty()) m_profName->setText(m_user);
+    fillProfileFields(DatabaseManager::instance().loadCustomerProfile());
 }
 
 bool MainWindow::validateLogin(const QString& user, const QString& pass)
@@ -407,34 +469,191 @@ void MainWindow::setTabActive(int tabIndex){
 void MainWindow::showTrailer(){
     setTabActive(0);
     m_pages->setCurrentIndex(0);
-    setWindowTitle("Trailo – Trailer");
+    setWindowTitle("Trailo – Utánfutók");
 }
 
 void MainWindow::showCalendar(){
     setTabActive(1);
     m_pages->setCurrentIndex(1);
-    setWindowTitle("Trailo – Calendar");
+    setWindowTitle("Trailo – Naptár");
+    refreshCalendar();
 }
 
 void MainWindow::showOrders(){
     setTabActive(2);
     m_pages->setCurrentIndex(2);
-    setWindowTitle("Trailo – Orders");
+    setWindowTitle("Trailo – Rendelések");
+    refreshOrders();
+}
+
+bool MainWindow::ensureProfileReadyForReservation()
+{
+    const auto profile = collectProfileFromFields();
+    if (profile.fullName.trimmed().isEmpty() || profile.email.trimmed().isEmpty() || profile.phone.trimmed().isEmpty()) {
+        QMessageBox::warning(this, QStringLiteral("Hiányzó profil adatok"),
+                             QStringLiteral("Foglalás előtt töltsd ki és mentsd el legalább a teljes nevet, email címet és telefonszámot a Profil oldalon."));
+        showProfile();
+        return false;
+    }
+    if (!DatabaseManager::instance().saveCustomerProfile(profile)) {
+        QMessageBox::warning(this, QStringLiteral("Hiba"), QStringLiteral("A profil mentése nem sikerült, ezért a foglalás sem indulhat el."));
+        return false;
+    }
+    return true;
+}
+
+CustomerProfile MainWindow::collectProfileFromFields() const
+{
+    CustomerProfile profile;
+    profile.id = 1;
+    if (m_profName) profile.fullName = m_profName->text().trimmed();
+    if (m_profEmail) profile.email = m_profEmail->text().trimmed();
+    if (m_profPhone) profile.phone = m_profPhone->text().trimmed();
+    if (m_profBillingName) profile.billingName = m_profBillingName->text().trimmed();
+    if (m_profBillingCountry) profile.country = m_profBillingCountry->text().trimmed();
+    if (m_profBillingZip) profile.postalCode = m_profBillingZip->text().trimmed();
+    if (m_profBillingCity) profile.city = m_profBillingCity->text().trimmed();
+    if (m_profBillingStreet) profile.street = m_profBillingStreet->text().trimmed();
+    if (m_profBillingHouse) profile.houseNumber = m_profBillingHouse->text().trimmed();
+    if (m_profCompany) profile.companyName = m_profCompany->text().trimmed();
+    if (m_profTaxNumber) profile.taxNumber = m_profTaxNumber->text().trimmed();
+    if (m_profIdNumber) profile.idNumber = m_profIdNumber->text().trimmed();
+    if (m_profDriverLicense) profile.licenseNumber = m_profDriverLicense->text().trimmed();
+    return profile;
+}
+
+void MainWindow::fillProfileFields(const CustomerProfile& profile)
+{
+    if (m_profName) m_profName->setText(profile.fullName.isEmpty() ? m_user : profile.fullName);
+    if (m_profEmail) m_profEmail->setText(profile.email.isEmpty() ? m_email : profile.email);
+    if (m_profPhone) m_profPhone->setText(profile.phone.isEmpty() ? m_phone : profile.phone);
+    if (m_profBillingName) m_profBillingName->setText(profile.billingName);
+    if (m_profBillingCountry) m_profBillingCountry->setText(profile.country);
+    if (m_profBillingZip) m_profBillingZip->setText(profile.postalCode);
+    if (m_profBillingCity) m_profBillingCity->setText(profile.city);
+    if (m_profBillingStreet) m_profBillingStreet->setText(profile.street);
+    if (m_profBillingHouse) m_profBillingHouse->setText(profile.houseNumber);
+    if (m_profCompany) m_profCompany->setText(profile.companyName);
+    if (m_profTaxNumber) m_profTaxNumber->setText(profile.taxNumber);
+    if (m_profIdNumber) m_profIdNumber->setText(profile.idNumber);
+    if (m_profDriverLicense) m_profDriverLicense->setText(profile.licenseNumber);
 }
 
 void MainWindow::orderTrailer(const QString& title) {
-    if (m_ordersList) {
-        const QString ts = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm");
-        m_ordersList->addItem(QStringLiteral("%1 • %2").arg(ts, title));
+    if (!ensureProfileReadyForReservation()) return;
+
+    const auto trailer = DatabaseManager::instance().trailerByName(title);
+    if (trailer.id <= 0) {
+        QMessageBox::warning(this, QStringLiteral("Hiba"), QStringLiteral("Nem található az utánfutó az adatbázisban."));
+        return;
     }
 
-    showOrders();
+    RentDialog dialog(trailer, DatabaseManager::instance().loadCustomerProfile(), this);
+    if (dialog.exec() == QDialog::Accepted) {
+        refreshOrders();
+        refreshCalendar();
+        showOrders();
+        QMessageBox::information(this, QStringLiteral("Sikeres foglalás"), QStringLiteral("A foglalás el lett mentve."));
+    }
+}
 
-    QMessageBox::information(
-        this,
-        QStringLiteral("Order"),
-        QStringLiteral(u"\"%1\" bérlésének megkezdése.\nItt jöhet a foglalás űrlap (AM/PM/egész nap)." ).arg(title)
-        );
+void MainWindow::refreshOrders()
+{
+    if (!m_ordersList) return;
+    m_ordersList->clear();
+
+    const auto list = DatabaseManager::instance().reservations();
+    for (const auto& item : list) {
+        auto* row = new QListWidgetItem(QStringLiteral("%1\n%2 • %3 → %4 • %5 Ft")
+                                            .arg(item.customerName,
+                                                 item.trailerName,
+                                                 item.startDate.toString("yyyy-MM-dd"),
+                                                 item.endDate.toString("yyyy-MM-dd"),
+                                                 QString::number(item.totalPrice)));
+        row->setData(Qt::UserRole, item.id);
+        row->setToolTip(QStringLiteral("Dupla kattintással megnyitható\nNapok: %1").arg(item.days));
+        m_ordersList->addItem(row);
+    }
+}
+
+void MainWindow::refreshCalendar()
+{
+    if (!m_calendarTable || !m_calendarMonthLabel) return;
+    m_calendarMonthLabel->setText(QLocale(QLocale::Hungarian).toString(m_calendarMonth, "yyyy. MMMM"));
+    populateCalendarTable();
+}
+
+void MainWindow::populateCalendarTable()
+{
+    const auto trailers = DatabaseManager::instance().trailers();
+    const auto monthReservations = DatabaseManager::instance().reservationsForMonth(m_calendarMonth);
+    const QDate first(m_calendarMonth.year(), m_calendarMonth.month(), 1);
+    const int daysInMonth = first.daysInMonth();
+
+    m_calendarTable->clear();
+    m_calendarTable->setRowCount(trailers.size());
+    m_calendarTable->setColumnCount(daysInMonth);
+
+    QStringList headers;
+    for (int day = 1; day <= daysInMonth; ++day) {
+        headers << QString::number(day);
+    }
+    m_calendarTable->setHorizontalHeaderLabels(headers);
+
+    for (int row = 0; row < trailers.size(); ++row) {
+        m_calendarTable->setVerticalHeaderItem(row, new QTableWidgetItem(trailers[row].name));
+        for (int col = 0; col < daysInMonth; ++col) {
+            auto* item = new QTableWidgetItem;
+            item->setTextAlignment(Qt::AlignCenter);
+            m_calendarTable->setItem(row, col, item);
+        }
+    }
+
+    for (int row = 0; row < trailers.size(); ++row) {
+        const auto& trailer = trailers[row];
+        for (int day = 1; day <= daysInMonth; ++day) {
+            const QDate currentDay(m_calendarMonth.year(), m_calendarMonth.month(), day);
+            QList<ReservationInfo> matches;
+            for (const auto& res : monthReservations) {
+                if (res.trailerId != trailer.id) continue;
+                if (res.startDate <= currentDay && res.endDate >= currentDay) matches.append(res);
+            }
+
+            auto* cell = m_calendarTable->item(row, day - 1);
+            if (!cell) continue;
+
+            if (!matches.isEmpty()) {
+                const bool full = matches.size() >= trailer.stock;
+                cell->setBackground(full ? QColor("#fecaca") : QColor("#bbf7d0"));
+                cell->setText(QString::number(matches.size()));
+                QStringList tooltipLines;
+                for (const auto& res : matches) {
+                    tooltipLines << QStringLiteral("%1 (%2 → %3)")
+                                        .arg(res.customerName,
+                                             res.startDate.toString("yyyy-MM-dd"),
+                                             res.endDate.toString("yyyy-MM-dd"));
+                }
+                cell->setToolTip(tooltipLines.join("\n"));
+            } else {
+                cell->setBackground(QColor("#ffffff"));
+                cell->setText("");
+                cell->setToolTip(QString());
+            }
+        }
+    }
+
+    m_calendarTable->resizeRowsToContents();
+}
+
+void MainWindow::openReservationDetails(const ReservationInfo& reservation)
+{
+    auto* dialog = new ReservationDetailsDialog(reservation, this);
+    connect(dialog, &ReservationDetailsDialog::reservationDeleted, this, [this](int){
+        refreshOrders();
+        refreshCalendar();
+    });
+    dialog->exec();
+    dialog->deleteLater();
 }
 
 void MainWindow::onLoginClicked()
@@ -452,25 +671,61 @@ void MainWindow::onLoginClicked()
     if (m_phone.isEmpty()) m_phone = "+36 30 123 4567";
     if (m_loginError) m_loginError->setText("");
 
+    fillProfileFields(DatabaseManager::instance().loadCustomerProfile());
     showApp();
 }
 
 void MainWindow::onRegisterClicked()
 {
     QMessageBox::information(this, "Regisztráció (PoC)",
-                             "Regisztráció (PoC): itt lenne egy regisztrációs oldal/űrlap.");
+                             "Regisztráció továbbra is PoC, de a foglalási és profilkezelési részek már működnek.");
 }
 
 void MainWindow::onForgotClicked()
 {
     QMessageBox::information(this, "Jelszó emlékeztető (PoC)",
-                             "Elfelejtett jelszó (PoC): itt lenne jelszó-visszaállítás.");
+                             "Az elfelejtett jelszó folyamat ennél a verziónál még nincs kidolgozva.");
 }
 
 void MainWindow::onSaveProfileClicked()
 {
-    if (m_profEmail) m_email = m_profEmail->text().trimmed();
-    if (m_profPhone) m_phone = m_profPhone->text().trimmed();
+    const auto profile = collectProfileFromFields();
+    if (profile.fullName.isEmpty() || profile.email.isEmpty() || profile.phone.isEmpty()) {
+        QMessageBox::warning(this, QStringLiteral("Hiányzó adatok"), QStringLiteral("A teljes név, email és telefon mezők kitöltése kötelező."));
+        return;
+    }
 
-    QMessageBox::information(this, "Mentve", "Profil adatok elmentve (PoC).\n(A valódi mentés DB-be menne.)");
+    if (!DatabaseManager::instance().saveCustomerProfile(profile)) {
+        QMessageBox::warning(this, QStringLiteral("Hiba"), QStringLiteral("Nem sikerült elmenteni a profil adatokat."));
+        return;
+    }
+
+    m_email = profile.email;
+    m_phone = profile.phone;
+    QMessageBox::information(this, QStringLiteral("Mentve"), QStringLiteral("A profil adatok el lettek mentve az adatbázisba."));
+}
+
+void MainWindow::onOrderItemDoubleClicked(QListWidgetItem* item)
+{
+    if (!item) return;
+    const int reservationId = item->data(Qt::UserRole).toInt();
+    const auto list = DatabaseManager::instance().reservations();
+    for (const auto& reservation : list) {
+        if (reservation.id == reservationId) {
+            openReservationDetails(reservation);
+            return;
+        }
+    }
+}
+
+void MainWindow::showPreviousMonth()
+{
+    m_calendarMonth = m_calendarMonth.addMonths(-1);
+    refreshCalendar();
+}
+
+void MainWindow::showNextMonth()
+{
+    m_calendarMonth = m_calendarMonth.addMonths(1);
+    refreshCalendar();
 }
