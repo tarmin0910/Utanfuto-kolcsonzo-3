@@ -1,14 +1,18 @@
 #pragma once
 #include <QMainWindow>
 #include <QString>
-#include <QPushButton>
+#include <QDate>
+
+#include "DatabaseManager.h"
 
 class QStackedWidget;
-class QToolBar;
 class QAction;
 class QLineEdit;
 class QLabel;
 class QListWidget;
+class QPushButton;
+class QTableWidget;
+class QListWidgetItem;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -18,18 +22,24 @@ public:
 private:
     QWidget* buildLoginPage();
     QWidget* buildAppShell();
-
     QWidget* buildTrailerPage();
     QWidget* buildCalendarPage();
     QWidget* buildOrdersPage();
     QWidget* buildProfilePage();
 
     void applyGlobalStyle();
-    void setTabActive(int tabIndex); // 0=Trailer, 1=Calendar, 2=Orders
+    void setTabActive(int tabIndex);
     void showLogin();
     void showApp();
     void showProfile();
     bool validateLogin(const QString& user, const QString& pass);
+    bool ensureProfileReadyForReservation();
+    CustomerProfile collectProfileFromFields() const;
+    void fillProfileFields(const CustomerProfile& profile);
+    void refreshOrders();
+    void refreshCalendar();
+    void populateCalendarTable();
+    void openReservationDetails(const ReservationInfo& reservation);
 
 private slots:
     void showTrailer();
@@ -41,6 +51,9 @@ private slots:
     void onRegisterClicked();
     void onForgotClicked();
     void onSaveProfileClicked();
+    void onOrderItemDoubleClicked(QListWidgetItem* item);
+    void showPreviousMonth();
+    void showNextMonth();
 
 private:
     QStackedWidget* m_rootPages {nullptr};
@@ -58,6 +71,10 @@ private:
     QLabel*    m_loginError {nullptr};
 
     QListWidget* m_ordersList {nullptr};
+    QTableWidget* m_calendarTable {nullptr};
+    QLabel* m_calendarMonthLabel {nullptr};
+    QLabel* m_calendarLegendLabel {nullptr};
+    QDate m_calendarMonth;
 
     QLineEdit* m_profName {nullptr};
     QLineEdit* m_profEmail {nullptr};
